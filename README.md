@@ -11,8 +11,18 @@ A simple bash script to automatically configure Ubuntu's APT package sources to 
 
 ## Usage
 
+### Quick install (one-liner)
+
 ```bash
+curl -sL https://raw.githubusercontent.com/ClassicDarkPack/arvan-mirror-setup/main/setup-arvan-mirror.sh | bash
+```
+
+### Manual install (recommended, review before running)
+
+```bash
+curl -sL -o setup-arvan-mirror.sh https://raw.githubusercontent.com/ClassicDarkPack/arvan-mirror-setup/main/setup-arvan-mirror.sh
 chmod +x setup-arvan-mirror.sh
+cat setup-arvan-mirror.sh   # review the contents before running
 ./setup-arvan-mirror.sh
 ```
 
