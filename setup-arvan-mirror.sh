@@ -357,7 +357,7 @@ apply_changes() {
     return
   fi
 
-  mkdir -p -m 700 -- "$BACKUP_BASE"
+  mkdir -p -- "$BACKUP_BASE" && chmod 700 -- "$BACKUP_BASE"
   snapshot="$(mktemp -d "$BACKUP_BASE/snapshot-$(date +%Y%m%dT%H%M%S)-XXXXXXXX")"
   backup_changes "$snapshot"
   ROLLBACK_DIR="$snapshot"
@@ -393,7 +393,7 @@ restore_latest() {
   ((${#CHANGED_FILES[@]})) || die "Empty backup manifest"
 
   # A temporary pre-restore snapshot allows rollback if verification fails.
-  mkdir -p -m 700 -- "$BACKUP_BASE"
+  mkdir -p -- "$BACKUP_BASE" && chmod 700 -- "$BACKUP_BASE"
   TRANSIENT_ROLLBACK="$(mktemp -d "$BACKUP_BASE/.restore-XXXXXXXX")"
   backup_changes "$TRANSIENT_ROLLBACK"
   ROLLBACK_DIR="$TRANSIENT_ROLLBACK"
