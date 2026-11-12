@@ -503,36 +503,7 @@ interactive_menu() {
     key=''
     IFS= read -rsn1 key || return 0
     case "$key" in
-        parse_args "$@"
-  check_system
-  case "$ACTION" in
-    menu)
-      interactive_menu
-      ;;
-    status)
-      find_sources
-      show_status
-      ;;
-    dry-run)
-      find_sources
-      apply_changes
-      ;;
-    apply)
-      check_privileges
-      command -v "$APT_GET" >/dev/null || die "apt-get is required"
-      find_sources
-      apply_changes
-      ;;
-    restore)
-      check_privileges
-      command -v "$APT_GET" >/dev/null || die "apt-get is required"
-      restore_latest
-      ;;
-  esac
-}
-
-main "$@"
-\e')
+      $'\e')
         sequence=''
         IFS= read -rsn2 -t 0.3 sequence || :
         case "$sequence" in
@@ -570,6 +541,9 @@ main() {
   fi
   check_system
   case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
     status)
       find_sources
       show_status
