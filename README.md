@@ -19,7 +19,7 @@
 
 Arvan Mirror Manager changes recognized Ubuntu package-source entries without replacing your entire configuration. It supports both traditional `sources.list` and deb822 `ubuntu.sources`, retains unrelated repositories and settings, and backs up modified sources before calling APT.
 
-- **Interactive TUI:** colored sections with ↑/↓, Enter, numeric shortcuts including `11` for Exit, or `q` to quit. Both manual apply modes let you choose the mirror.
+- **Interactive TUI:** a read-only source summary, clear primary actions, keyboard navigation (↑/↓ or j/k), `?` help, `r` refresh and `q` exit. Both manual apply modes let you choose the mirror.
 - **Auto Select Best Mirror:** verifies signed Ubuntu metadata/freshness first, then measures download throughput using a bounded real `Packages.xz` index transfer (up to 1 MiB when HTTP Range is honored).
 - **Manual mirror choice:** ArvanCloud, IranServer, Pishgaman, or the official Ubuntu archive.
 - **Security-first defaults:** `noble-security` (or your Ubuntu release's security pocket) stays on `security.ubuntu.com` unless you explicitly opt into `--all-mirror`.
@@ -102,7 +102,7 @@ sudo ./setup-arvan-mirror.sh --mirror ubuntu
  11) Exit
 ```
 
-Menu text may change between releases. You can navigate with arrow keys and Enter, select a mirror manually under options 1/2, enter `11` to exit, or press `q`. The interface is a terminal menu, not a desktop application.
+The dashboard summarizes **configured source URIs**, not network health. It does not run network checks on startup. Navigate using arrow keys or `j/k`, select with Enter, use `?` for help, `r` to re-read local status, `11` or `q` to exit. Minimum recommended terminal size is 58 columns by 19 rows; 80×27 gives a less dense layout. In `NO_COLOR` or `TERM=dumb`, the interface uses plain text. Terminal font/Unicode rendering and SSH behavior vary by terminal emulator. The interface is a terminal menu, not a desktop application.
 
 ## Supported mirrors
 
