@@ -667,30 +667,121 @@ MENU_ITEMS=(
   "Exit"
 )
 
-menu_draw() {
-  local selected="$1" idx marker
-  printf '\033[H\033[2J'
-  printf '%s' "$C_TITLE"
-  printf '  +--------------------------------------------------+\n'
-  printf '  |           ARVAN MIRROR MANAGER v%-16s|\n' "$APP_VERSION"
-  printf '  +--------------------------------------------------+\n'
-  printf '%s' "$C_RESET"
-  printf '  Ubuntu: %s  |  SSH / Terminal\n' "$CODENAME"
-  printf '  %sChanges require confirmation; security stays official by default.%s\n' "$C_MUTED" "$C_RESET"
-  printf '\n  %sMIRROR MANAGEMENT%s\n' "$C_SUCCESS" "$C_RESET"
-  for idx in "${!MENU_ITEMS[@]}"; do
-    if ((idx == 5)); then
-      printf '\n  %sTOOLS & RECOVERY%s\n' "$C_SUCCESS" "$C_RESET"
-    fi
-    marker=' '
-    if ((idx == selected)); then marker='>'; fi
-    if ((idx == selected)); then
-      printf '%s %s %2d. %-44s%s\n' "$C_ACCENT" "$marker" "$((idx+1))" "${MENU_ITEMS[idx]}" "$C_RESET"
+# Read-only dashboard status. The status reflects configured source text only:
+# no network requests and no claims that package indices are up to date.
+dashboard_uri() {
+  local kind="$1" path
+  for path in "$APT_DIR/sources.list.d/ubuntu.sources" "$APT_DIR/sources.list"; do
+    [[ -r "$path" && -f "$path" && ! -L "$path" ]] || continue
+    if [[ "$path" == *.sources ]]; then
+      awk -v kind="$kind" '
+        BEGIN { RS=""; FS="\n" }
+        {
+          uri=""; suites=""
+          for (i=1; i<=NF; i++) {
+            if ($i ~ /^URIs:[ \t]*/) {uri=$i; sub(/^URIs:[ \t]*/, "", uri)}
+            if ($i ~ /^Suites:[ \t]*/) {suites=$i; sub(/^Suites:[ \t]*/, "", suites)}
+          }
+          # Do not claim certainty for multi-URI stanzas.
+          if (uri=="" || uri ~ /[ \t]/) next
+          sec=(suites ~ /(^|[ \t])[a-z0-9]+-security([ \t]|$)/)
+          normal=(suites ~ /(^|[ \t])[a-z0-9]+(-updates|-backports)?([ \t]|$)/)
+          if ((kind=="security" && sec) || (kind=="normal" && normal)) {
+            print uri; exit
+          }
+        }
+      ' "$path"
     else
-      printf ' %s %2d. %s\n' "$marker" "$((idx+1))" "${MENU_ITEMS[idx]}"
+      awk -v kind="$kind" '
+        /^[ \t]*deb([ \t]|-src[ \t])/ && $0 !~ /^[ \t]*#/ {
+          # For option-free standard lines, read the URI and suite.
+          # Unknown formats are intentionally reported as "unknown".
+          if ($2 ~ /^\[/) next
+          sec=($3 ~ /-security$/)
+          if ((kind=="security" && sec) || (kind=="normal" && !sec)) {
+            print $2; exit
+          }
+        }
+      ' "$path"
     fi
+  done | head -n 1
+}
+
+dashboard_host() {
+  local uri="$1" host
+  if [[ -z "$uri" ]]; then printf 'Not detected'; return; fi
+  host="${uri#*://}"
+  host="${host%%/*}"
+  # Keep the dashboard safe when the source text is malformed.
+  if [[ "$host" =~ ^[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]; then
+    printf '%s' "$host"
+  else
+    printf 'Custom / unknown'
+  fi
+}
+
+dashboard_size() {
+  UI_COLS=80 UI_ROWS=24
+  if command -v tput >/dev/null 2>&1; then
+    local cols rows
+    cols="$(tput cols 2>/dev/null)" || cols=''
+    rows="$(tput lines 2>/dev/null)" || rows=''
+    [[ "$cols" =~ ^[0-9]+$ ]] && UI_COLS="$cols"
+    [[ "$rows" =~ ^[0-9]+$ ]] && UI_ROWS="$rows"
+  fi
+  UI_COMPACT=0
+  ((UI_ROWS < 27)) && UI_COMPACT=1
+}
+
+dashboard_item() {
+  local idx="$1" selected="$2" label="$3" marker=' '
+  if ((idx==selected)); then
+    marker='>'
+    printf '  %s%s %2d  %-42.42s%s\n' "$C_ACCENT" "$marker" "$((idx+1))" "$label" "$C_RESET"
+  else
+    printf '   %s %2d  %s\n' "$marker" "$((idx+1))" "$label"
+  fi
+}
+
+menu_draw() {
+  local selected="$1" idx main_uri security_uri
+  dashboard_size
+  printf '\033[H\033[2J'
+  if ((UI_COLS < 58 || UI_ROWS < 19)); then
+    printf '%sTerminal size: %sx%s. Recommended: at least 58x19.%s\n' \
+      "$C_WARN" "$UI_COLS" "$UI_ROWS" "$C_RESET"
+    printf 'Resize to see the dashboard; q quits, arrows still work.\n'
+    return
+  fi
+
+  main_uri="$(dashboard_uri normal)"
+  security_uri="$(dashboard_uri security)"
+  printf '  %sARVAN MIRROR MANAGER%s  %sv%s%s\n' "$C_TITLE" "$C_RESET" "$C_MUTED" "$APP_VERSION" "$C_RESET"
+  printf '  %sUbuntu %s  /  amd64  /  Local configuration%s\n' \
+    "$C_MUTED" "$CODENAME" "$C_RESET"
+  printf '  ------------------------------------------------------\n'
+  printf '  %sMIRROR%s   %-36.36s\n' "$C_SUCCESS" "$C_RESET" "$(dashboard_host "$main_uri")"
+  printf '  %sSECURITY%s %-36.36s\n' "$C_SUCCESS" "$C_RESET" "$(dashboard_host "$security_uri")"
+  printf '  %sHEALTH%s  Not tested  [4] Verify mirrors\n' "$C_WARN" "$C_RESET"
+  if ((!UI_COMPACT)); then
+    printf '  %sSource status is read-only; no network check on startup.%s\n' \
+      "$C_MUTED" "$C_RESET"
+  fi
+  printf '\n  %sMIRROR ACTIONS%s\n' "$C_TITLE" "$C_RESET"
+  for idx in 0 1 2 3 4; do
+    dashboard_item "$idx" "$selected" "${MENU_ITEMS[idx]}"
   done
-  printf '\n  %sUp/Down + Enter | 1-11 + Enter | 0/q = Exit%s\n' "$C_MUTED" "$C_RESET"
+  printf '\n  %sTOOLS & RECOVERY%s\n' "$C_TITLE" "$C_RESET"
+  for idx in 5 6 7 8 9 10; do
+    dashboard_item "$idx" "$selected" "${MENU_ITEMS[idx]}"
+  done
+  printf '\n  %sUP/DOWN or j/k%s navigate   %sENTER%s select   %s?%s help   %sq%s quit\n' \
+    "$C_MUTED" "$C_RESET" "$C_MUTED" "$C_RESET" \
+    "$C_MUTED" "$C_RESET" "$C_MUTED" "$C_RESET"
+  if ((!UI_COMPACT)); then
+    printf '  %s1-11%s shortcuts   %sr%s refresh local status   %sNO_COLOR%s supported\n' \
+      "$C_MUTED" "$C_RESET" "$C_MUTED" "$C_RESET" "$C_MUTED" "$C_RESET"
+  fi
 }
 
 menu_read_choice() {
@@ -708,6 +799,10 @@ menu_read_choice() {
       MENU_ACTIVATE=0
       ;;
     q|Q|0) MENU_CHOICE=10; MENU_ACTIVATE=1 ;;
+    j) MENU_CHOICE=$(((selected + 1) % ${#MENU_ITEMS[@]})); MENU_ACTIVATE=0 ;;
+    k) MENU_CHOICE=$(((selected + ${#MENU_ITEMS[@]} - 1) % ${#MENU_ITEMS[@]})); MENU_ACTIVATE=0 ;;
+    r|R) MENU_CHOICE="$selected"; MENU_ACTIVATE=0 ;;
+    '?') MENU_CHOICE=9; MENU_ACTIVATE=1 ;;
     '') MENU_CHOICE="$selected"; MENU_ACTIVATE=1 ;;
     [1-9])
       extra=''
