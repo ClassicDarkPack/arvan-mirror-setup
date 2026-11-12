@@ -289,4 +289,19 @@ run_script --apply > /dev/null
 assert_contains "$ROOT/sandbox/etc/apt/sources.list.d/ubuntu.sources" 'URIs: https://security.ubuntu.com/ubuntu/'
 pass 'deb822 IranServer security is migrated to official origin'
 
+
+# Regression: an interactive auto selection must freeze the selected mirror
+# before both the preview and the confirmed apply. A second --auto would
+# silently select another mirror if download speeds change.
+MENU_FUNCTION="$(sed -n '/^menu_preview_and_apply() {/,/^}/p' "$SCRIPT")"
+[[ "$MENU_FUNCTION" == *'args+=(--mirror "$BEST_MIRROR")'* ]] \
+  || fail 'Interactive auto apply is not locked to selected mirror'
+[[ "$MENU_FUNCTION" == *'preview+=(--mirror "$BEST_MIRROR")'* ]] \
+  || fail 'Interactive auto preview is not locked to selected mirror'
+if [[ "$MENU_FUNCTION" == *'args+=(--auto)'* ||
+      "$MENU_FUNCTION" == *'preview+=(--auto)'* ]]; then
+  fail 'Interactive auto action would re-benchmark after confirmation'
+fi
+pass 'auto preview and apply pin the same selected mirror'
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
