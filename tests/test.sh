@@ -294,9 +294,11 @@ pass 'deb822 IranServer security is migrated to official origin'
 # before both the preview and the confirmed apply. A second --auto would
 # silently select another mirror if download speeds change.
 MENU_FUNCTION="$(sed -n '/^menu_preview_and_apply() {/,/^}/p' "$SCRIPT")"
-[[ "$MENU_FUNCTION" == *'args+=(--mirror "$BEST_MIRROR")'* ]] \
+[[ "$MENU_FUNCTION" == *'selected_mirror="$BEST_MIRROR"'* ]] \
+  || fail 'Interactive auto selection does not retain selected mirror'
+[[ "$MENU_FUNCTION" == *'args+=(--mirror "$selected_mirror")'* ]] \
   || fail 'Interactive auto apply is not locked to selected mirror'
-[[ "$MENU_FUNCTION" == *'preview+=(--mirror "$BEST_MIRROR")'* ]] \
+[[ "$MENU_FUNCTION" == *'preview+=(--mirror "$selected_mirror")'* ]] \
   || fail 'Interactive auto preview is not locked to selected mirror'
 if [[ "$MENU_FUNCTION" == *'args+=(--auto)'* ||
       "$MENU_FUNCTION" == *'preview+=(--auto)'* ]]; then
