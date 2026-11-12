@@ -2,12 +2,14 @@
 set -Eeuo pipefail
 
 # Arvan Mirror Setup: safely switch supported Ubuntu APT sources.
-VERSION="1.2.0"
+VERSION="1.3.0"
 DEFAULT_MIRROR="https://mirror.arvancloud.ir/ubuntu"
 SECURITY_MIRROR="https://security.ubuntu.com/ubuntu"
 MIRROR="$DEFAULT_MIRROR"
 ACTION="apply"
 ALL_MIRROR=0
+AUTO_SELECT=0
+MIRROR_EXPLICIT=0
 
 # The test root keeps integration tests away from the host's /etc/apt.
 # Never set this environment variable for a normal installation.
@@ -31,18 +33,131 @@ ROLLBACK_DIR=""
 ROLLBACK_ACTIVE=0
 TRANSIENT_ROLLBACK=""
 
+#!/usr/bin/env bash
+# Sourced by setup-arvan-mirror.sh; candidates are not presumed healthy.
+mirror_url() {
+  case "$1" in
+    arvan) printf '%s\n' 'https://mirror.arvancloud.ir/ubuntu' ;;
+    iranserver) printf '%s\n' 'https://mirror.iranserver.com/ubuntu' ;;
+    pishgaman) printf '%s\n' 'https://ubuntu.pishgaman.net/ubuntu' ;;
+    ubuntu) printf '%s\n' 'https://archive.ubuntu.com/ubuntu' ;;
+    *) return 1 ;;
+  esac
+}
+list_mirrors() {
+  local name
+  printf 'Mirror candidates (NOT pre-verified):\n'
+  for name in arvan iranserver pishgaman ubuntu; do
+    printf '  %-12s %s\n' "$name" "$(mirror_url "$name")"
+  done
+}
+probe_pocket() {
+  local url="$1" suite="$2" output="$3" speed
+  speed="$(curl --fail --location --silent --show-error \
+    --proto '=https' --connect-timeout 4 --max-time 12 \
+    --output "$output" --write-out '%{speed_download}' \
+    "$url/dists/$suite/InRelease")" || return 1
+  [[ -s "$output" ]] || return 1
+  gpgv --quiet --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg \
+    "$output" 2>/dev/null || return 1
+  PROBE_SPEED="${speed%%.*}"
+  [[ "$PROBE_SPEED" =~ ^[0-9]+$ ]] || PROBE_SPEED=0
+}
+release_epoch() {
+  local timestamp
+  timestamp="$(awk '/^Date: / { sub(/^Date: /, ""); print; exit }' "$1")"
+  [[ -n "$timestamp" ]] || return 1
+  date -u -d "$timestamp" +%s
+}
+evaluate_mirrors() {
+  command -v curl >/dev/null && command -v gpgv >/dev/null \
+    && [[ -r /usr/share/keyrings/ubuntu-archive-keyring.gpg ]] \
+    || die "Mirror checks need curl, gpgv and ubuntu-keyring"
+  local temp official_date now name url candidate_date speed best_speed=-1
+  local security_ref="" security_date=""
+  temp="$(mktemp -d "${TMPDIR:-/tmp}/arvan-mirror-check.XXXXXXXX")"
+  if ! probe_pocket "$(mirror_url ubuntu)" "$CODENAME-updates" "$temp/reference"; then
+    rm -rf -- "$temp"
+    die "Cannot authenticate the official Ubuntu -updates reference"
+  fi
+  official_date="$(release_epoch "$temp/reference")" || {
+    rm -rf -- "$temp"
+    die "Official Ubuntu InRelease has invalid Date metadata"
+  }
+  now="$(date -u +%s)"
+  if ((official_date > now + 86400)); then
+    rm -rf -- "$temp"
+    die "Official Ubuntu metadata is dated in the future"
+  fi
+  if ((ALL_MIRROR)); then
+    if ! probe_pocket "$SECURITY_MIRROR" "$CODENAME-security" "$temp/security-reference"; then
+      rm -rf -- "$temp"
+      die "Cannot authenticate official Ubuntu security metadata"
+    fi
+    security_ref="$(release_epoch "$temp/security-reference")" || {
+      rm -rf -- "$temp"
+      die "Official Ubuntu security metadata has invalid Date"
+    }
+  fi
+  BEST_MIRROR=""
+  printf 'Signed metadata / freshness checks for Ubuntu %s:\n' "$CODENAME"
+  for name in arvan iranserver pishgaman ubuntu; do
+    url="$(mirror_url "$name")"
+    if ! probe_pocket "$url" "$CODENAME-updates" "$temp/updates"; then
+      printf '  %-12s FAIL (unreachable/unsigned)\n' "$name"
+      continue
+    fi
+    speed="$PROBE_SPEED"
+    candidate_date="$(release_epoch "$temp/updates")" || {
+      printf '  %-12s FAIL (invalid Date)\n' "$name"
+      continue
+    }
+    if ((candidate_date > now + 86400 || candidate_date + 43200 < official_date)); then
+      printf '  %-12s STALE (more than 12h behind official)\n' "$name"
+      continue
+    fi
+    if ! probe_pocket "$url" "$CODENAME" "$temp/base" ||
+       ! probe_pocket "$url" "$CODENAME-backports" "$temp/backports"; then
+      printf '  %-12s FAIL (base/backports unavailable or unsigned)\n' "$name"
+      continue
+    fi
+    if ((ALL_MIRROR)); then
+      if ! probe_pocket "$url" "$CODENAME-security" "$temp/security"; then
+        printf '  %-12s FAIL (security unavailable or unsigned)\n' "$name"
+        continue
+      fi
+      security_date="$(release_epoch "$temp/security")" || continue
+      if ((security_date + 43200 < security_ref)); then
+        printf '  %-12s STALE (security updates)\n' "$name"
+        continue
+      fi
+    fi
+    printf '  %-12s VERIFIED (%s KiB/s metadata)\n' "$name" "$((speed / 1024))"
+    if ((speed > best_speed)); then
+      best_speed="$speed"
+      BEST_MIRROR="$url"
+    fi
+  done
+  rm -rf -- "$temp"
+  [[ -n "$BEST_MIRROR" ]] || die "No sufficiently fresh signed Ubuntu mirror is available"
+  printf 'Best verified candidate: %s\n' "$BEST_MIRROR"
+}
+
 usage() {
   cat <<'USAGE'
 Usage: sudo ./setup-arvan-mirror.sh [options]
 
 Options:
   --menu              Open an interactive terminal menu (default with a TTY)
+  --list-mirrors      List candidate mirror URLs (offline)
+  --check-mirrors     Check signed repository freshness / download speed
+  --auto              Automatically select a verified, fresh mirror
+  --mirror NAME|URL   Use arvan, iranserver, pishgaman, ubuntu, or HTTPS URL
   --apply             Update supported Ubuntu APT source entries
   --dry-run           Show proposed changes without changing files or using APT
   --status            Show configured source files and Arvan references
   --restore           Restore the latest saved pre-change backup
   --all-mirror        Include Ubuntu security updates in the Arvan mirror
-  --mirror URL        Use a custom HTTPS mirror instead of Arvan
   --help              Show this help
   --version           Show version
 
@@ -60,6 +175,9 @@ parse_args() {
     case "$1" in
       --apply) ACTION="apply" ;;
       --menu) ACTION="menu" ;;
+      --list-mirrors) ACTION="list-mirrors" ;;
+      --check-mirrors) ACTION="check-mirrors" ;;
+      --auto) AUTO_SELECT=1 ;;
       --dry-run) ACTION="dry-run" ;;
       --status) ACTION="status" ;;
       --restore) ACTION="restore" ;;
@@ -67,6 +185,10 @@ parse_args() {
       --mirror)
         (($# >= 2)) || die "--mirror requires an HTTPS URL"
         MIRROR="$2"
+        MIRROR_EXPLICIT=1
+        if mirror_url "$MIRROR" >/dev/null; then
+          MIRROR="$(mirror_url "$MIRROR")"
+        fi
         shift
         ;;
       --help|-h) usage; exit 0 ;;
@@ -75,6 +197,7 @@ parse_args() {
     esac
     shift
   done
+  (( ! AUTO_SELECT || ! MIRROR_EXPLICIT )) || die "--auto and --mirror cannot be combined"
   # Avoid URLs containing whitespace, shell metacharacters or awk separators.
   [[ "$MIRROR" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[a-zA-Z0-9._~/%+-]*)?$ ]] \
     || die "--mirror must be a simple HTTPS URL (without query or credentials)"
@@ -89,7 +212,7 @@ check_system() {
   CODENAME="${VERSION_CODENAME:-}"
   [[ "$CODENAME" =~ ^[a-z][a-z0-9]+$ ]] || die "Invalid or missing Ubuntu codename"
 
-  if [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+  if [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" || "$ACTION" == "check-mirrors" ]]; then
     local arch
     if [[ -n "${ARVAN_TEST_ROOT:-}" ]]; then
       arch="${ARVAN_TEST_ARCH:-amd64}"
@@ -130,7 +253,9 @@ rewrite_legacy() {
               uri ~ /^https?:\/\/security\.ubuntu\.com\/ubuntu\/?$/ ||
               uri ~ /^https?:\/\/ports\.ubuntu\.com\/ubuntu-ports\/?$/ ||
               uri ~ /^https?:\/\/old-releases\.ubuntu\.com\/ubuntu\/?$/ ||
-              uri ~ /^https?:\/\/mirror\.arvancloud\.ir\/ubuntu\/?$/)
+              uri ~ /^https?:\/\/mirror\.arvancloud\.ir\/ubuntu\/?$/ ||
+              uri ~ /^https?:\/\/mirror\.iranserver\.com\/ubuntu\/?$/ ||
+              uri ~ /^https?:\/\/ubuntu\.pishgaman\.net\/ubuntu\/?$/)
     }
     function is_arvan(uri) {
       return uri ~ /^https?:\/\/mirror\.arvancloud\.ir(\/|$)/
@@ -181,7 +306,9 @@ rewrite_deb822() {
               uri ~ /^https?:\/\/security\.ubuntu\.com\/ubuntu\/?$/ ||
               uri ~ /^https?:\/\/ports\.ubuntu\.com\/ubuntu-ports\/?$/ ||
               uri ~ /^https?:\/\/old-releases\.ubuntu\.com\/ubuntu\/?$/ ||
-              uri ~ /^https?:\/\/mirror\.arvancloud\.ir\/ubuntu\/?$/)
+              uri ~ /^https?:\/\/mirror\.arvancloud\.ir\/ubuntu\/?$/ ||
+              uri ~ /^https?:\/\/mirror\.iranserver\.com\/ubuntu\/?$/ ||
+              uri ~ /^https?:\/\/ubuntu\.pishgaman\.net\/ubuntu\/?$/)
     }
     function is_arvan(uri) { return uri ~ /^https?:\/\/mirror\.arvancloud\.ir(\/|$)/ }
     function emit(uri, suites,    i) {
@@ -440,6 +567,10 @@ menu_run() {
 menu_preview_and_apply() {
   local mode="$1" reply
   local args=(--apply) preview=(--dry-run)
+  if [[ "$mode" == "auto" ]]; then
+    args+=(--auto)
+    preview+=(--auto)
+  fi
   if [[ "$mode" == "all" ]]; then
     args+=(--all-mirror)
     preview+=(--all-mirror)
@@ -469,6 +600,9 @@ menu_draw() {
   local options=(
     "Apply Arvan mirror (official security)"
     "Apply Arvan to all repositories"
+    "Auto Select Best Mirror"
+    "Check mirror freshness and speed"
+    "List candidate mirror URLs"
     "Preview default changes (dry-run)"
     "Preview all-mirror changes"
     "Show APT source status"
@@ -489,7 +623,7 @@ menu_draw() {
       printf '   %d) %s\n' "$((idx + 1))" "${options[idx]}"
     fi
   done
-  printf '\n Use Up/Down + Enter, numbers 1-8, or q to quit.\n'
+  printf '\n Use Up/Down + Enter, 1-9, 0=Exit, or q to quit.\n'
   printf ' Nothing changes until you confirm an action.\n'
 }
 
@@ -505,12 +639,13 @@ interactive_menu() {
         sequence=''
         IFS= read -rsn2 -t 0.3 sequence || :
         case "$sequence" in
-          '[A') selected=$(((selected + 7) % 8)) ;;
-          '[B') selected=$(((selected + 1) % 8)) ;;
+          '[A') selected=$(((selected + 9) % 10)) ;;
+          '[B') selected=$(((selected + 1) % 10)) ;;
         esac
         continue
         ;;
-      [1-8]) selected=$((key - 1)) ;;
+      [1-9]) selected=$((key - 1)) ;;
+      0) selected=9 ;;
       q|Q) printf '\n'; return 0 ;;
       '') ;;
       *) continue ;;
@@ -520,12 +655,14 @@ interactive_menu() {
     case "$choice" in
       1) menu_preview_and_apply default || printf 'Action failed.\n' ;;
       2) menu_preview_and_apply all || printf 'Action failed.\n' ;;
-      3) bash "$0" --dry-run || printf 'Preview failed.\n' ;;
-      4) bash "$0" --dry-run --all-mirror || printf 'Preview failed.\n' ;;
-      5) bash "$0" --status || printf 'Status failed.\n' ;;
-      6) menu_restore || printf 'Restore failed.\n' ;;
-      7) usage ;;
-      8) return 0 ;;
+      3) menu_preview_and_apply auto || printf 'Auto selection failed.\n' ;;
+      4) bash "$0" --check-mirrors || printf 'Check failed.\n' ;;
+      5) bash "$0" --list-mirrors || printf 'List failed.\n' ;;
+      6) bash "$0" --dry-run || printf 'Preview failed.\n' ;;
+      7) bash "$0" --dry-run --all-mirror || printf 'Preview failed.\n' ;;
+      8) bash "$0" --status || printf 'Status failed.\n' ;;
+      9) menu_restore || printf 'Restore failed.\n' ;;
+      10) return 0 ;;
     esac
     menu_pause
   done
@@ -538,6 +675,18 @@ main() {
     parse_args "$@"
   fi
   check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
   case "$ACTION" in
     menu)
       interactive_menu
