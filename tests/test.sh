@@ -229,4 +229,20 @@ assert_contains "$ROOT/unknown-output" 'Nothing to change'
 assert_contains "$ROOT/sandbox/etc/apt/sources.list" 'https://archive.ubuntu.com/not-an-ubuntu-repo'
 pass 'unrecognized repository paths are not modified'
 
+
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list" <<'MENU_SOURCE'
+deb http://archive.ubuntu.com/ubuntu noble main
+MENU_SOURCE
+if run_script --menu > "$ROOT/menu-error" 2>&1; then
+  fail 'Expected explicit menu to reject non-TTY'
+fi
+assert_contains "$ROOT/menu-error" 'requires a terminal'
+[[ ! -d "$ROOT/sandbox/var/backups" ]] || fail 'Non-TTY menu modified backups'
+pass 'interactive menu safely refuses non-TTY input'
+
+run_script --help > "$ROOT/help-output"
+assert_contains "$ROOT/help-output" '--menu'
+pass 'help documents interactive menu'
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
