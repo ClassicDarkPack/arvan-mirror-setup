@@ -373,4 +373,17 @@ if command -v script >/dev/null 2>&1; then
   pass 'dashboard reads configured mirrors safely and exits with q'
 fi
 
+
+# Regression: a tall terminal must not exit due to arithmetic test status
+# under set -e. Resize the PTY to 100x35 before opening the dashboard.
+if command -v script >/dev/null 2>&1 && command -v stty >/dev/null 2>&1; then
+  printf 'q' | ARVAN_TEST_ROOT="$ROOT/sandbox" \
+    ARVAN_TEST_APT_GET="$ROOT/fake-apt-get" TERM=xterm \
+    script -q -e -c "stty rows 35 cols 100; bash '$SCRIPT' --menu" /dev/null \
+      > "$ROOT/dashboard-tall-output"
+  assert_contains "$ROOT/dashboard-tall-output" 'ARVAN MIRROR MANAGER'
+  assert_contains "$ROOT/dashboard-tall-output" 'Goodbye!'
+  pass 'tall 100x35 TTY dashboard stays interactive under errexit'
+fi
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
