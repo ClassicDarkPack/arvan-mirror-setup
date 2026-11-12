@@ -726,8 +726,8 @@ dashboard_size() {
     local cols rows
     cols="$(tput cols 2>/dev/null)" || cols=''
     rows="$(tput lines 2>/dev/null)" || rows=''
-    [[ "$cols" =~ ^[0-9]+$ ]] && UI_COLS="$cols"
-    [[ "$rows" =~ ^[0-9]+$ ]] && UI_ROWS="$rows"
+    [[ "$cols" =~ ^[1-9][0-9]*$ ]] && UI_COLS="$cols"
+    [[ "$rows" =~ ^[1-9][0-9]*$ ]] && UI_ROWS="$rows"
   fi
   UI_COMPACT=0
   ((UI_ROWS < 27)) && UI_COMPACT=1
@@ -748,9 +748,11 @@ menu_draw() {
   dashboard_size
   printf '\033[H\033[2J'
   if ((UI_COLS < 58 || UI_ROWS < 19)); then
-    printf '%sTerminal size: %sx%s. Recommended: at least 58x19.%s\n' \
+    printf '%sTerminal too small (%sx%s). Resize for the full dashboard.%s\n' \
       "$C_WARN" "$UI_COLS" "$UI_ROWS" "$C_RESET"
-    printf 'Resize to see the dashboard; q quits, arrows still work.\n'
+    printf 'Selected: %s (%d of %d)\n' \
+      "${MENU_ITEMS[selected]}" "$((selected+1))" "${#MENU_ITEMS[@]}"
+    printf 'Use Up/Down + Enter to select; q exits.\n'
     return
   fi
 
