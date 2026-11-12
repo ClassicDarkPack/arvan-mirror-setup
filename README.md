@@ -19,8 +19,8 @@
 
 Arvan Mirror Manager changes recognized Ubuntu package-source entries without replacing your entire configuration. It supports both traditional `sources.list` and deb822 `ubuntu.sources`, retains unrelated repositories and settings, and backs up modified sources before calling APT.
 
-- **Interactive TUI:** navigate with ↑/↓, Enter, or numeric shortcuts over SSH.
-- **Auto Select Best Mirror:** considers signed Ubuntu metadata and freshness before comparing small-file download rates.
+- **Interactive TUI:** colored sections with ↑/↓, Enter, numeric shortcuts including `11` for Exit, or `q` to quit. Both manual apply modes let you choose the mirror.
+- **Auto Select Best Mirror:** verifies signed Ubuntu metadata/freshness first, then measures download throughput using a bounded real `Packages.xz` index transfer (up to 1 MiB when HTTP Range is honored).
 - **Manual mirror choice:** ArvanCloud, IranServer, Pishgaman, or the official Ubuntu archive.
 - **Security-first defaults:** `noble-security` (or your Ubuntu release's security pocket) stays on `security.ubuntu.com` unless you explicitly opt into `--all-mirror`.
 - **Dry run, backups, and rollback:** preview changes; restore APT source files automatically if verification fails.
@@ -89,10 +89,10 @@ sudo ./setup-arvan-mirror.sh --mirror ubuntu
 ========================================
        ARVAN MIRROR MANAGER
 ========================================
-  1) Apply Arvan mirror (official security)
-  2) Apply Arvan to all repositories
+  1) Select mirror (official security)
+  2) Select mirror (all Ubuntu pockets)
   3) Auto Select Best Mirror
-  4) Check mirror freshness and speed
+  4) Check mirror freshness and real download speed
   5) List candidate mirror URLs
   6) Preview default changes (dry-run)
   7) Preview all-mirror changes
@@ -102,7 +102,7 @@ sudo ./setup-arvan-mirror.sh --mirror ubuntu
  11) Exit
 ```
 
-Menu text may change between releases. You can navigate with arrow keys and Enter, or use displayed numeric shortcuts. The interface is a terminal menu, not a desktop application.
+Menu text may change between releases. You can navigate with arrow keys and Enter, select a mirror manually under options 1/2, enter `11` to exit, or press `q`. The interface is a terminal menu, not a desktop application.
 
 ## Supported mirrors
 
@@ -122,9 +122,9 @@ Menu text may change between releases. You can navigate with arrow keys and Ente
 2. Verify Ubuntu archive signatures using `gpgv` and the system's Ubuntu archive keyring.
 3. Check each candidate's signed `-updates` metadata date against the official reference. Reject candidates more than **12 hours behind**, or with invalid metadata.
 4. Require signed metadata for the base and `-backports` pockets too. In `--all-mirror` mode, additionally check `-security` against the official security reference.
-5. Choose the verified candidate with the highest measured download rate for its `-updates/InRelease` file.
+5. Download a bounded sample of the actual compressed `-updates/main/binary-amd64/Packages.xz` file, then choose the verified candidate with the highest measured transfer rate. A mirror that cannot serve the sample is excluded.
 
-**Important:** this is a lightweight metadata-speed comparison, **not** a complete package-download benchmark or a guarantee that every package is already synchronized. If the official signed reference cannot be verified, automatic selection stops without changing your sources. Manual selection is still available.
+**Important:** this is a bounded real package-index download benchmark, **not** a full `.deb` installation or complete package-download benchmark or a guarantee that every package is already synchronized. If the official signed reference cannot be verified, automatic selection stops without changing your sources. Manual selection is still available.
 
 ## Command reference
 
