@@ -6,6 +6,8 @@ Unlike the original installer, it **edits recognized Ubuntu entries instead of r
 
 ## Features
 
+- **Interactive terminal menu** on TTY when launched without arguments (or with `--menu`), with arrow-key/number navigation, previews, and confirmations. Existing CLI flags remain available for automation.
+
 - Detects Ubuntu and its codename using `/etc/os-release`; refuses Debian and unsupported CPU architectures.
 - Changes only recognized official Ubuntu / Arvan repository URLs in:
   - `/etc/apt/sources.list`
@@ -20,7 +22,7 @@ Unlike the original installer, it **edits recognized Ubuntu entries instead of r
 ## Requirements
 
 - Ubuntu **amd64** with `apt-get`, `awk`, and standard GNU/Linux utilities.
-- `sudo`/root access for `--apply` (default) and `--restore`.
+- `sudo`/root access for `--apply` and `--restore` (the menu can request sudo when necessary).
 - Network access to the configured mirror and enabled APT repositories during validation.
 
 > This version deliberately **does not support arm64/Ubuntu ports** because availability of the matching mirror layout has not been verified. Other `.list`/`.sources` files under `sources.list.d/` are left untouched rather than guessing which sources should be changed.
@@ -35,6 +37,15 @@ curl -fL -o setup-arvan-mirror.sh \
 chmod +x setup-arvan-mirror.sh
 less setup-arvan-mirror.sh
 ```
+
+Open the interactive menu from an SSH terminal:
+
+```bash
+./setup-arvan-mirror.sh --menu
+# Or simply: ./setup-arvan-mirror.sh
+```
+
+The menu displays a preview and asks for confirmation before applying. Privileged operations use `sudo` when needed. On non-interactive sessions, use explicit flags like `--apply` or `--dry-run`.
 
 Preview without elevated privileges (the preview does not change APT configuration):
 
@@ -73,6 +84,8 @@ sudo ./setup-arvan-mirror.sh --mirror https://example.org/ubuntu
 - `--status` lists source files and approximate active references; it is **not** a network/health check.
 
 ## Testing
+
+The interactive menu requires stdin and stdout to be terminals; piping into `--menu` fails safely. Navigation is available over SSH in ordinary ANSI-compatible terminals. CLI flags continue to work unchanged.
 
 The integration tests run entirely in temporary directories with a fake `apt-get` command, so they never modify real system sources:
 
