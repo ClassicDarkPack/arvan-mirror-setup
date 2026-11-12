@@ -2,11 +2,12 @@
 set -Eeuo pipefail
 
 # Arvan Mirror Setup: safely switch supported Ubuntu APT sources.
-VERSION="1.1.0"
+VERSION="1.2.0"
 DEFAULT_MIRROR="https://mirror.arvancloud.ir/ubuntu"
 SECURITY_MIRROR="https://security.ubuntu.com/ubuntu"
 MIRROR="$DEFAULT_MIRROR"
 ACTION="apply"
+INTERACTIVE=0
 ALL_MIRROR=0
 
 # The test root keeps integration tests away from the host's /etc/apt.
@@ -36,7 +37,8 @@ usage() {
 Usage: sudo ./setup-arvan-mirror.sh [options]
 
 Options:
-  --apply             Update supported Ubuntu APT source entries (default)
+  --menu              Open an interactive terminal menu (default with a TTY)
+  --apply             Update supported Ubuntu APT source entries
   --dry-run           Show proposed changes without changing files or using APT
   --status            Show configured source files and Arvan references
   --restore           Restore the latest saved pre-change backup
@@ -58,6 +60,7 @@ parse_args() {
   while (($#)); do
     case "$1" in
       --apply) ACTION="apply" ;;
+      --menu) ACTION="menu" ;;
       --dry-run) ACTION="dry-run" ;;
       --status) ACTION="status" ;;
       --restore) ACTION="restore" ;;
@@ -414,8 +417,157 @@ restore_latest() {
   log "Restored APT sources from $snapshot"
 }
 
+
+# An interactive front-end to the existing CLI. All privileged operations run
+# through a fresh process so the backup and rollback state cannot leak between
+# successive menu actions.
+menu_pause() {
+  local ignored
+  printf '\nPress Enter to return to the menu...'
+  IFS= read -r ignored || :
+}
+
+menu_run() {
+  local args=("$@")
+  if [[ -n "${ARVAN_TEST_ROOT:-}" || "$EUID" -eq 0 ]]; then
+    bash "$0" "${args[@]}"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo bash "$0" "${args[@]}"
+  else
+    printf 'This action requires root. Run: sudo bash %s --apply\n' "$0" >&2
+    return 1
+  fi
+}
+
+menu_preview_and_apply() {
+  local mode="$1" reply
+  local args=(--apply) preview=(--dry-run)
+  if [[ "$mode" == "all" ]]; then
+    args+=(--all-mirror)
+    preview+=(--all-mirror)
+  fi
+  printf '\nShowing changes before applying:\n\n'
+  bash "$0" "${preview[@]}" || return
+  printf '\nApply these settings? [y/N]: '
+  IFS= read -r reply || return
+  case "$reply" in
+    y|Y|yes|YES) menu_run "${args[@]}" ;;
+    *) printf 'Cancelled. No settings changed.\n' ;;
+  esac
+}
+
+menu_restore() {
+  local reply
+  printf '\nRestore the latest saved APT sources backup? [y/N]: '
+  IFS= read -r reply || return
+  case "$reply" in
+    y|Y|yes|YES) menu_run --restore ;;
+    *) printf 'Cancelled. No settings changed.\n' ;;
+  esac
+}
+
+menu_draw() {
+  local selected="$1" idx
+  local options=(
+    "Apply Arvan mirror (official security)"
+    "Apply Arvan to all repositories"
+    "Preview default changes (dry-run)"
+    "Preview all-mirror changes"
+    "Show APT source status"
+    "Restore latest backup"
+    "Help and options"
+    "Exit"
+  )
+  printf '\033[H\033[2J'
+  printf '========================================\n'
+  printf '  ARVAN MIRROR MANAGER  v%s\n' "$VERSION"
+  printf '========================================\n'
+  printf ' Ubuntu: %s    Mode: Interactive\n' "$CODENAME"
+  printf ' ---------------------------------------\n'
+  for idx in "${!options[@]}"; do
+    if ((idx == selected)); then
+      printf ' > %d) %s\n' "$((idx + 1))" "${options[idx]}"
+    else
+      printf '   %d) %s\n' "$((idx + 1))" "${options[idx]}"
+    fi
+  done
+  printf '\n Use Up/Down + Enter, numbers 1-8, or q to quit.\n'
+  printf ' Nothing changes until you confirm an action.\n'
+}
+
+interactive_menu() {
+  [[ -t 0 && -t 1 ]] || die "Interactive menu requires a terminal (TTY). Use --help for CLI options."
+  local selected=0 key sequence choice
+  while :; do
+    menu_draw "$selected"
+    key=''
+    IFS= read -rsn1 key || return 0
+    case "$key" in
+        parse_args "$@"
+  check_system
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e')
+        sequence=''
+        IFS= read -rsn2 -t 0.3 sequence || :
+        case "$sequence" in
+          '[A') selected=$(((selected + 7) % 8)) ;;
+          '[B') selected=$(((selected + 1) % 8)) ;;
+        esac
+        continue
+        ;;
+      [1-8]) selected=$((key - 1)) ;;
+      q|Q) printf '\n'; return 0 ;;
+      '') ;;
+      *) continue ;;
+    esac
+    choice=$((selected + 1))
+    printf '\n'
+    case "$choice" in
+      1) menu_preview_and_apply default || printf 'Action failed.\n' ;;
+      2) menu_preview_and_apply all || printf 'Action failed.\n' ;;
+      3) bash "$0" --dry-run || printf 'Preview failed.\n' ;;
+      4) bash "$0" --dry-run --all-mirror || printf 'Preview failed.\n' ;;
+      5) bash "$0" --status || printf 'Status failed.\n' ;;
+      6) menu_restore || printf 'Restore failed.\n' ;;
+      7) usage ;;
+      8) return 0 ;;
+    esac
+    menu_pause
+  done
+}
+
 main() {
-  parse_args "$@"
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
   check_system
   case "$ACTION" in
     status)
