@@ -341,4 +341,36 @@ MENU_FUNCTION="$(sed -n '/^menu_preview_and_apply() {/,/^}/p' "$SCRIPT")"
   || fail 'Manual preview did not pin its mirror'
 pass 'manual preview and apply use the same selected mirror'
 
+
+# TUI dashboard: check the new navigation and read-only status components.
+assert_contains "$SCRIPT" 'dashboard_uri()'
+assert_contains "$SCRIPT" 'dashboard_host()'
+assert_contains "$SCRIPT" 'dashboard_size()'
+assert_contains "$SCRIPT" 'dashboard_item()'
+assert_contains "$SCRIPT" 'MENU_CHOICE=9; MENU_ACTIVATE=1'
+pass 'dashboard renders structured status with discoverable help navigation'
+
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list.d/ubuntu.sources" <<'DASHBOARD_SOURCES'
+Types: deb
+URIs: https://mirror.iranserver.com/ubuntu/
+Suites: noble noble-updates noble-backports
+Components: main
+
+Types: deb
+URIs: https://security.ubuntu.com/ubuntu/
+Suites: noble-security
+Components: main
+DASHBOARD_SOURCES
+if command -v script >/dev/null 2>&1; then
+  printf 'q' | ARVAN_TEST_ROOT="$ROOT/sandbox" \
+    ARVAN_TEST_APT_GET="$ROOT/fake-apt-get" TERM=xterm \
+    script -q -e -c "bash '$SCRIPT' --menu" /dev/null > "$ROOT/dashboard-output"
+  assert_contains "$ROOT/dashboard-output" 'mirror.iranserver.com'
+  assert_contains "$ROOT/dashboard-output" 'security.ubuntu.com'
+  assert_contains "$ROOT/dashboard-output" 'Not tested'
+  assert_contains "$ROOT/dashboard-output" 'Goodbye!'
+  pass 'dashboard reads configured mirrors safely and exits with q'
+fi
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
