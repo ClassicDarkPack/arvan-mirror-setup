@@ -306,7 +306,6 @@ pass 'auto preview and apply pin the same selected mirror'
 
 
 # Regression tests for the TUI navigation and mirror selection behavior.
-SCRIPT_TEXT="$(cat "$SCRIPT")"
 assert_contains "$SCRIPT" 'APP_VERSION="1.4.0"'
 assert_contains "$SCRIPT" '11) printf'
 assert_contains "$SCRIPT" 'menu_choose_mirror default'
