@@ -54,7 +54,7 @@ list_mirrors() {
 probe_pocket() {
   local url="$1" suite="$2" output="$3" speed
   speed="$(curl --fail --location --silent --show-error \
-    --proto '=https' --connect-timeout 4 --max-time 12 \
+    --proto '=https' --proto-redir '=https' --connect-timeout 4 --max-time 12 \
     --output "$output" --write-out '%{speed_download}' \
     "$url/dists/$suite/InRelease")" || return 1
   [[ -s "$output" ]] || return 1
@@ -258,7 +258,7 @@ rewrite_legacy() {
               uri ~ /^https?:\/\/ubuntu\.pishgaman\.net\/ubuntu\/?$/)
     }
     function is_arvan(uri) {
-      return uri ~ /^https?:\/\/mirror\.arvancloud\.ir(\/|$)/
+      return uri ~ /^https?:\/\/(mirror\.arvancloud\.ir|mirror\.iranserver\.com|ubuntu\.pishgaman\.net)(\/|$)/
     }
     {
       line=$0
@@ -310,7 +310,7 @@ rewrite_deb822() {
               uri ~ /^https?:\/\/mirror\.iranserver\.com\/ubuntu\/?$/ ||
               uri ~ /^https?:\/\/ubuntu\.pishgaman\.net\/ubuntu\/?$/)
     }
-    function is_arvan(uri) { return uri ~ /^https?:\/\/mirror\.arvancloud\.ir(\/|$)/ }
+    function is_arvan(uri) { return uri ~ /^https?:\/\/(mirror\.arvancloud\.ir|mirror\.iranserver\.com|ubuntu\.pishgaman\.net)(\/|$)/ }
     function emit(uri, suites,    i) {
       for (i=1; i<=n; i++) {
         if (i==uri_index) { print "URIs: " uri; continue }
