@@ -1,114 +1,220 @@
-# Arvan Mirror Setup
+<div align="center">
 
-> v1.3 adds named mirrors, signed repository freshness checks, and Auto Select. A listed mirror is not guaranteed healthy.
+# Arvan Mirror Manager
 
-A cautious Bash utility for switching **Ubuntu amd64** APT sources to the [ArvanCloud](https://www.arvancloud.ir/) mirror. It supports the legacy `sources.list` format and Ubuntu's newer deb822 `ubuntu.sources` format.
+**A safer Ubuntu APT mirror manager — with an interactive terminal menu, signed-metadata checks, and automatic mirror selection.**
 
-Unlike the original installer, it **edits recognized Ubuntu entries instead of replacing entire source files**. It backs up changed files and automatically restores them if APT validation fails.
+[![CI](https://github.com/ClassicDarkPack/arvan-mirror-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/ClassicDarkPack/arvan-mirror-setup/actions/workflows/ci.yml)
+![Bash](https://img.shields.io/badge/Bash-5%2B-4EAA25?logo=gnubash&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-amd64-E95420?logo=ubuntu&logoColor=white)
 
-## Features
+[Quick start](#quick-start) · [فارسی](#راهنمای-سریع-فارسی) · [Mirrors](#supported-mirrors) · [CLI](#command-reference) · [Safety](#safety-and-limitations)
 
-- Built-in mirror choices: **ArvanCloud**, **IranServer**, **Pishgaman**, and **official Ubuntu** (`archive.ubuntu.com`).
-- `--check-mirrors` downloads and authenticates `InRelease` for `codename`, `-updates` and `-backports` using `gpgv` and the Ubuntu archive keyring; compares each `-updates` Date with the authenticated official Ubuntu reference (12-hour tolerance). With `--all-mirror` it also checks `-security` against official security metadata.
-- `--auto` selects the highest observed `-updates/InRelease` download speed **among validated, sufficiently fresh candidates**. This is an approximate small-file transfer measurement, not a full package download benchmark. It refuses to select a mirror if the official freshness reference is unavailable.
-- `--mirror pishgaman` / `--mirror ubuntu` choose catalogued URLs manually; these modes still validate APT on application, but do not perform a preselection freshness check.
+</div>
 
+> [!IMPORTANT]
+> This tool changes Ubuntu APT sources. **Review the dry-run before applying**, and test on a disposable VM before using it on production servers. It currently targets **Ubuntu amd64 only**.
 
-- **Interactive terminal menu** on TTY when launched without arguments (or with `--menu`), with arrow-key/number navigation, previews, and confirmations. Existing CLI flags remain available for automation.
+## Why this project?
 
-- Detects Ubuntu and its codename using `/etc/os-release`; refuses Debian and unsupported CPU architectures.
-- Changes only recognized official Ubuntu / Arvan repository URLs in:
-  - `/etc/apt/sources.list`
-  - `/etc/apt/sources.list.d/ubuntu.sources`
-- Preserves third-party entries, comments, `Components`, `Signed-By`, `Architectures`, and other deb822 fields.
-- **Keeps Ubuntu security updates on the official security server by default.** Use `--all-mirror` to put them on Arvan too. For older installs that put normal and security suites in one deb822 stanza, separates them as necessary.
-- Creates a timestamped, permission-restricted backup under `/var/backups/arvan-mirror-setup/` whenever files change.
-- Automatically rolls back source files when `apt-get update --error-on=any` fails, including when APT cannot reach another enabled repository.
-- Supports preview (`--dry-run`), inspection (`--status`), restoration (`--restore`), and custom HTTPS mirror (`--mirror`).
-- Running it a second time without any pending changes does not create more backups or run APT again.
+Arvan Mirror Manager changes recognized Ubuntu package-source entries without replacing your entire configuration. It supports both traditional `sources.list` and deb822 `ubuntu.sources`, retains unrelated repositories and settings, and backs up modified sources before calling APT.
 
-## Requirements
+- **Interactive TUI:** navigate with ↑/↓, Enter, or numeric shortcuts over SSH.
+- **Auto Select Best Mirror:** considers signed Ubuntu metadata and freshness before comparing small-file download rates.
+- **Manual mirror choice:** ArvanCloud, IranServer, Pishgaman, or the official Ubuntu archive.
+- **Security-first defaults:** `noble-security` (or your Ubuntu release's security pocket) stays on `security.ubuntu.com` unless you explicitly opt into `--all-mirror`.
+- **Dry run, backups, and rollback:** preview changes; restore APT source files automatically if verification fails.
+- **CLI-friendly:** explicit flags work in scripts and non-interactive environments.
 
-- Ubuntu **amd64** with `apt-get`, `awk`, and standard GNU/Linux utilities. For `--auto` and `--check-mirrors`, also install `curl`, `gpgv`, and `ubuntu-keyring`.
-- `sudo`/root access for `--apply` and `--restore` (the menu can request sudo when necessary).
-- Network access to the configured mirror and enabled APT repositories during validation.
+## Quick start
 
-> This version deliberately **does not support arm64/Ubuntu ports** because availability of the matching mirror layout has not been verified. Other `.list`/`.sources` files under `sources.list.d/` are left untouched rather than guessing which sources should be changed.
+Download the file first, then review it (recommended instead of piping a network response into Bash):
 
-## Install and use
+```bash
+curl -fL -o setup-arvan-mirror.sh \
+  https://raw.githubusercontent.com/ClassicDarkPack/arvan-mirror-setup/main/setup-arvan-mirror.sh
 
-**Download and review the script before running it** (recommended over `curl | bash`):
+chmod +x setup-arvan-mirror.sh
+less setup-arvan-mirror.sh
+```
+
+Run the interactive menu in a terminal or SSH session:
+
+```bash
+./setup-arvan-mirror.sh --menu
+```
+
+Or preview and apply the default Arvan configuration:
+
+```bash
+./setup-arvan-mirror.sh --dry-run
+sudo ./setup-arvan-mirror.sh --apply
+```
+
+The menu previews changes and asks for confirmation before applying them. Actions that modify APT require root; the menu can invoke `sudo` when needed. Without arguments, the menu opens **only when both stdin and stdout are TTYs**. In automation, always use explicit flags.
+
+### راهنمای سریع فارسی
+
+این ابزار برای مدیریت میرورهای مخازن Ubuntu طراحی شده و روی سرورهای SSH هم منوی تعاملی دارد.
+
+**نصب و اجرای منو:**
 
 ```bash
 curl -fL -o setup-arvan-mirror.sh \
   https://raw.githubusercontent.com/ClassicDarkPack/arvan-mirror-setup/main/setup-arvan-mirror.sh
 chmod +x setup-arvan-mirror.sh
-less setup-arvan-mirror.sh
-```
-
-Open the interactive menu from an SSH terminal:
-
-```bash
 ./setup-arvan-mirror.sh --menu
-# Or simply: ./setup-arvan-mirror.sh
 ```
 
-The menu displays a preview and asks for confirmation before applying. Privileged operations use `sudo` when needed. On non-interactive sessions, use explicit flags like `--apply` or `--dry-run`.
-
-Preview without elevated privileges (the preview does not change APT configuration):
+**انتخاب خودکار بهترین میرور سالم و به‌روز:**
 
 ```bash
-./setup-arvan-mirror.sh --dry-run
-```
-
-Apply and validate:
-
-```bash
-sudo ./setup-arvan-mirror.sh --apply
-```
-
-Other options:
-
-```bash
-./setup-arvan-mirror.sh --status
-sudo ./setup-arvan-mirror.sh --restore
-sudo ./setup-arvan-mirror.sh --all-mirror
-./setup-arvan-mirror.sh --list-mirrors
 ./setup-arvan-mirror.sh --check-mirrors
 ./setup-arvan-mirror.sh --auto --dry-run
 sudo ./setup-arvan-mirror.sh --auto
-sudo ./setup-arvan-mirror.sh --mirror pishgaman
-sudo ./setup-arvan-mirror.sh --mirror ubuntu
-sudo ./setup-arvan-mirror.sh --mirror https://example.org/ubuntu
-./setup-arvan-mirror.sh --help
 ```
 
-`--auto` and `--mirror` cannot be combined. Selecting an alternative mirror depends on that mirror actually serving the requested Ubuntu codename and pockets. If authenticated official reference metadata is unavailable, auto-selection fails closed. The interactive menu includes a read-only mirror check and automatic selection with a preview and confirmation.
+**استفاده از پیشگامان یا میرور رسمی اوبونتو:**
 
-`--all-mirror` includes `-security` sources; without it, an existing official security URL remains unchanged. If previous versions redirected security updates to Arvan, the default mode switches those sources back to `https://security.ubuntu.com/ubuntu/`.
+```bash
+sudo ./setup-arvan-mirror.sh --mirror pishgaman
+sudo ./setup-arvan-mirror.sh --mirror ubuntu
+```
 
-`--restore` restores the **latest snapshot**, then runs `apt-get update` to verify it. It also protects the pre-restore state in case validation fails. Backups remain on disk until an administrator removes them.
+**نکته امنیتی:** به‌صورت پیش‌فرض آپدیت‌های امنیتی از `security.ubuntu.com` دریافت می‌شوند. اگر می‌خواهید مخزن امنیتی هم از همان میرور انتخابی باشد، `--all-mirror` را آگاهانه اضافه کنید. اجرای مجدد بدون تغییر لازم، بکاپ جدید نمی‌سازد.
+
+## Interactive menu
+
+```text
+========================================
+       ARVAN MIRROR MANAGER
+========================================
+  1) Apply Arvan mirror (official security)
+  2) Apply Arvan to all repositories
+  3) Auto Select Best Mirror
+  4) Check mirror freshness and speed
+  5) List candidate mirror URLs
+  6) Preview default changes (dry-run)
+  7) Preview all-mirror changes
+  8) Show APT source status
+  9) Restore latest backup
+ 10) Help and options
+ 11) Exit
+```
+
+Menu text may change between releases. You can navigate with arrow keys and Enter, or use displayed numeric shortcuts. The interface is a terminal menu, not a desktop application.
+
+## Supported mirrors
+
+| Name | CLI selection | Ubuntu archive URL |
+| --- | --- | --- |
+| ArvanCloud | `--mirror arvan` | `https://mirror.arvancloud.ir/ubuntu` |
+| IranServer | `--mirror iranserver` | `https://mirror.iranserver.com/ubuntu` |
+| Pishgaman | `--mirror pishgaman` | `https://ubuntu.pishgaman.net/ubuntu` |
+| Official Ubuntu | `--mirror ubuntu` | `https://archive.ubuntu.com/ubuntu` |
+
+> [!NOTE]
+> Listing a provider does **not** guarantee its availability or freshness for your Ubuntu release. Use `--check-mirrors` on the machine where you will install packages.
+
+### How Auto Select works
+
+1. Download the official Ubuntu `-updates/InRelease` metadata as a reference.
+2. Verify Ubuntu archive signatures using `gpgv` and the system's Ubuntu archive keyring.
+3. Check each candidate's signed `-updates` metadata date against the official reference. Reject candidates more than **12 hours behind**, or with invalid metadata.
+4. Require signed metadata for the base and `-backports` pockets too. In `--all-mirror` mode, additionally check `-security` against the official security reference.
+5. Choose the verified candidate with the highest measured download rate for its `-updates/InRelease` file.
+
+**Important:** this is a lightweight metadata-speed comparison, **not** a complete package-download benchmark or a guarantee that every package is already synchronized. If the official signed reference cannot be verified, automatic selection stops without changing your sources. Manual selection is still available.
+
+## Command reference
+
+| Command | What it does |
+| --- | --- |
+| `./setup-arvan-mirror.sh --menu` | Open the terminal interface |
+| `./setup-arvan-mirror.sh --list-mirrors` | List built-in URL candidates; no network check |
+| `./setup-arvan-mirror.sh --check-mirrors` | Check mirror signatures, freshness, availability and metadata speed |
+| `./setup-arvan-mirror.sh --auto --dry-run` | Preview changes using the best verified mirror |
+| `sudo ./setup-arvan-mirror.sh --auto` | Select and apply the best verified mirror |
+| `sudo ./setup-arvan-mirror.sh --mirror pishgaman` | Choose a named mirror manually |
+| `sudo ./setup-arvan-mirror.sh --mirror ubuntu` | Switch standard Ubuntu sources to the official archive |
+| `sudo ./setup-arvan-mirror.sh --mirror iranserver --all-mirror` | Also point the security pocket to the selected mirror |
+| `./setup-arvan-mirror.sh --status` | Show managed sources and approximate Arvan references |
+| `./setup-arvan-mirror.sh --dry-run` | Show proposed changes without writing them |
+| `sudo ./setup-arvan-mirror.sh --restore` | Restore the latest backup and validate APT |
+| `./setup-arvan-mirror.sh --help` | Show all flags |
+
+Other examples:
+
+```bash
+sudo ./setup-arvan-mirror.sh --mirror https://example.org/ubuntu
+./setup-arvan-mirror.sh --version
+```
+
+`--auto` cannot be combined with `--mirror`. The `--status` command reads source text; it is **not** a network-health test.
+
+## Requirements
+
+- **Ubuntu amd64** with `apt-get`, `awk` and standard GNU/Linux tools.
+- `curl`, `gpgv` and the Ubuntu archive keyring (package `ubuntu-keyring`) for `--auto` and `--check-mirrors`.
+- Internet access to mirrors **and the official Ubuntu reference** for automatic freshness checking.
+- Root/sudo privileges for applying or restoring sources. You can preview and inspect sources without root.
+
+ARM64 / Ubuntu ports are **not supported** in this release. The editor only manages `/etc/apt/sources.list` and `/etc/apt/sources.list.d/ubuntu.sources`; it deliberately avoids guessing about third-party repository files.
 
 ## Safety and limitations
 
-- **Review the `--dry-run` diff before applying** on machines with customized APT settings.
-- Changes are limited to recognized Ubuntu codenames/suites (`codename`, `-updates`, `-backports`, `-security`), and known official Ubuntu or Arvan repository URLs. Unknown source layouts or multi-URI deb822 stanzas are not modified.
-- APT source configurations may already contain duplicate entries in other files. This tool does not disable or deduplicate third-party or unmanaged files.
-- Validation fails on **any** `apt-get update` error, including errors caused by unrelated third-party repositories, and restores the previous source files. The `apt-get` package index cache itself is not rolled back.
-- Backups are local, and automatic rollback cannot protect against an abrupt power loss or `SIGKILL`. Recovery remains possible from the stored snapshots.
-- Default URL: `https://mirror.arvancloud.ir/ubuntu/`. Actual mirror availability and freshness depend on the service provider. Security updates are deliberately kept on their official origin unless opted in.
-- `--status` lists source files and approximate active references; it is **not** a network/health check.
+> [!WARNING]
+> Use caution on production machines. You are changing the package manager's repository endpoints, not just a download preference.
 
-## Testing
+- Changes are restricted to recognized Ubuntu archive URLs/suites; unrelated APT stanzas, comments, `Signed-By`, `Architectures` and custom options are retained where supported.
+- Unknown or multi-URI deb822 configurations are intentionally left unchanged. Other files in `sources.list.d` are not deduplicated or modified.
+- Before each actual change, source files are backed up under `/var/backups/arvan-mirror-setup/`. A failed `apt-get update --error-on=any` triggers source-file rollback.
+- Restoration uses the newest snapshot and validates APT again. Saved snapshots remain on disk until you remove them.
+- APT package index caches are **not** rolled back; power failure or `SIGKILL` can interrupt automatic recovery.
+- APT source validation can fail due to **unrelated third-party repositories**. An authenticated `InRelease` does not on its own prove every package file has synchronized.
+- The default mode keeps the official Ubuntu security source. `--all-mirror` is an explicit trade-off that may expose you to security-mirror sync delays.
+- Backups and rollback are safety measures, not a substitute for testing on a VM.
 
-The interactive menu requires stdin and stdout to be terminals; piping into `--menu` fails safely. Navigation is available over SSH in ordinary ANSI-compatible terminals. CLI flags continue to work unchanged.
-
-The integration tests run entirely in temporary directories with a fake `apt-get` command, so they never modify real system sources:
+### Backups and troubleshooting
 
 ```bash
-bash -n setup-arvan-mirror.sh
-bash tests/test.sh
-# Optional: shellcheck setup-arvan-mirror.sh tests/test.sh
+# Inspect your current managed sources
+./setup-arvan-mirror.sh --status
+
+# See planned changes with no writes
+./setup-arvan-mirror.sh --dry-run
+
+# Restore the latest pre-change sources snapshot
+sudo ./setup-arvan-mirror.sh --restore
+
+# Inspect locally stored snapshot directories
+sudo ls -la /var/backups/arvan-mirror-setup/
 ```
 
-GitHub Actions runs the syntax check, ShellCheck, and tests on pushes and pull requests. Tests do not prove the actual Arvan network endpoint is accessible from every location; test on a disposable Ubuntu VM before using in production.
+If `--auto` reports that the official reference is unreachable, fix network access to the official archive or select a mirror manually. Do **not** treat an unverified mirror as fresh solely because its homepage opens.
+
+## Testing and contributing
+
+The test suite uses temporary files and a fake APT command, **not** your machine's real APT configuration.
+
+```bash
+bash -n setup-arvan-mirror.sh tests/test.sh
+bash tests/test.sh
+
+# Optional static analysis
+shellcheck -S warning setup-arvan-mirror.sh tests/test.sh
+```
+
+[GitHub Actions](https://github.com/ClassicDarkPack/arvan-mirror-setup/actions) runs syntax checks, ShellCheck and integration tests for pushes and pull requests. Passing CI does not replace a real-world smoke test on a disposable Ubuntu VM.
+
+Contributions are welcome. Open an [issue](https://github.com/ClassicDarkPack/arvan-mirror-setup/issues) with your Ubuntu codename, architecture, commands used, and **redacted** error output; or submit a pull request against `main`.
+
+---
+
+<div align="center">
+
+Made for Ubuntu administrators who want **faster mirrors without giving up basic safety checks**.
+
+[Repository](https://github.com/ClassicDarkPack/arvan-mirror-setup) · [Issues](https://github.com/ClassicDarkPack/arvan-mirror-setup/issues) · [Pull requests](https://github.com/ClassicDarkPack/arvan-mirror-setup/pulls)
+
+</div>
