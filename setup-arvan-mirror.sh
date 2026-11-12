@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Arvan Mirror Setup: safely switch supported Ubuntu APT sources.
-VERSION="1.3.0"
+APP_VERSION="1.4.0"
 DEFAULT_MIRROR="https://mirror.arvancloud.ir/ubuntu"
 SECURITY_MIRROR="https://security.ubuntu.com/ubuntu"
 MIRROR="$DEFAULT_MIRROR"
@@ -63,6 +63,23 @@ probe_pocket() {
   PROBE_SPEED="${speed%%.*}"
   [[ "$PROBE_SPEED" =~ ^[0-9]+$ ]] || PROBE_SPEED=0
 }
+# Measure a real compressed Ubuntu package index, not the tiny InRelease file.
+# Request at most 1 MiB; reject overly large responses when Range is ignored.
+# This is a bounded throughput sample, not a complete apt package benchmark.
+benchmark_mirror() {
+  local url="$1" output="$2" rate bytes
+  rate="$(curl --fail --location --silent --show-error \
+    --proto '=https' --proto-redir '=https' \
+    --connect-timeout 5 --max-time 20 \
+    --range 0-1048575 --max-filesize 8388608 \
+    --output "$output" --write-out '%{speed_download}' \
+    "$url/dists/$CODENAME-updates/main/binary-amd64/Packages.xz")" || return 1
+  bytes="$(wc -c < "$output")"
+  ((bytes >= 65536)) || return 1
+  BENCHMARK_SPEED="${rate%%.*}"
+  [[ "$BENCHMARK_SPEED" =~ ^[0-9]+$ ]] || return 1
+}
+
 release_epoch() {
   local timestamp
   timestamp="$(awk '/^Date: / { sub(/^Date: /, ""); print; exit }' "$1")"
@@ -107,7 +124,6 @@ evaluate_mirrors() {
       printf '  %-12s FAIL (unreachable/unsigned)\n' "$name"
       continue
     fi
-    speed="$PROBE_SPEED"
     candidate_date="$(release_epoch "$temp/updates")" || {
       printf '  %-12s FAIL (invalid Date)\n' "$name"
       continue
@@ -132,7 +148,12 @@ evaluate_mirrors() {
         continue
       fi
     fi
-    printf '  %-12s VERIFIED (%s KiB/s metadata)\n' "$name" "$((speed / 1024))"
+    if ! benchmark_mirror "$url" "$temp/package-index"; then
+      printf '  %-12s FAIL (bounded package-index speed test)\n' "$name"
+      continue
+    fi
+    speed="$BENCHMARK_SPEED"
+    printf '  %-12s VERIFIED (%s KiB/s package index)\n' "$name" "$((speed / 1024))"
     if ((speed > best_speed)); then
       best_speed="$speed"
       BEST_MIRROR="$url"
@@ -150,7 +171,7 @@ Usage: sudo ./setup-arvan-mirror.sh [options]
 Options:
   --menu              Open an interactive terminal menu (default with a TTY)
   --list-mirrors      List candidate mirror URLs (offline)
-  --check-mirrors     Check signed repository freshness / download speed
+  --check-mirrors     Check signed repository freshness and package-index download speed
   --auto              Automatically select a verified, fresh mirror
   --mirror NAME|URL   Use arvan, iranserver, pishgaman, ubuntu, or HTTPS URL
   --apply             Update supported Ubuntu APT source entries
@@ -192,7 +213,7 @@ parse_args() {
         shift
         ;;
       --help|-h) usage; exit 0 ;;
-      --version) printf 'arvan-mirror-setup %s\n' "$VERSION"; exit 0 ;;
+      --version) printf 'arvan-mirror-setup %s\n' "$APP_VERSION"; exit 0 ;;
       *) die "Unknown argument: $1 (see --help)" ;;
     esac
     shift
@@ -548,7 +569,7 @@ restore_latest() {
 # through a fresh process so the backup and rollback state cannot leak between
 # successive menu actions.
 menu_pause() {
-  printf '\nPress Enter to return to the menu...'
+  printf '\nPress Enter to return to the main menu...'
   IFS= read -r || :
 }
 
@@ -559,35 +580,352 @@ menu_run() {
   elif command -v sudo >/dev/null 2>&1; then
     sudo bash "$0" "${args[@]}"
   else
-    printf 'This action requires root. Run: sudo bash %s --apply\n' "$0" >&2
+    printf 'This action requires root (sudo is not available).\n' >&2
     return 1
   fi
 }
 
+menu_colors() {
+  C_RESET='' C_TITLE='' C_ACCENT='' C_SUCCESS='' C_MUTED='' C_WARN=''
+  if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
+    C_RESET=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[0m'
+    C_TITLE=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[1;36m'
+    C_ACCENT=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[1;32m'
+    C_SUCCESS=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[1;34m'
+    C_MUTED=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[2m'
+    C_WARN=
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e[1;33m'
+  fi
+}
+
 menu_preview_and_apply() {
-  local mode="$1" reply
+  local mode="$1" selected_mirror="${2:-}" reply
   local args=(--apply) preview=(--dry-run)
   if [[ "$mode" == "auto" ]]; then
-    # Run Auto Select once, before the preview. The confirmed mirror URL
-    # must not change if network speeds vary after the user presses y.
+    # The user must approve precisely the URL subsequently applied.
     evaluate_mirrors || return
     [[ -n "$BEST_MIRROR" ]] || die "No validated mirror selected"
-    args+=(--mirror "$BEST_MIRROR")
-    preview+=(--mirror "$BEST_MIRROR")
-    printf 'Selected mirror for this operation: %s\n' "$BEST_MIRROR"
+    selected_mirror="$BEST_MIRROR"
+  fi
+  if [[ -n "$selected_mirror" ]]; then
+    args+=(--mirror "$selected_mirror")
+    preview+=(--mirror "$selected_mirror")
+    printf 'Selected mirror: %s\n' "$selected_mirror"
   fi
   if [[ "$mode" == "all" ]]; then
     args+=(--all-mirror)
     preview+=(--all-mirror)
   fi
-  printf '\nShowing changes before applying:\n\n'
+  printf '\n%s--- Preview: no files are changed ---%s\n\n' "$C_TITLE" "$C_RESET"
   bash "$0" "${preview[@]}" || return
-  printf '\nApply these settings? [y/N]: '
+  printf '\n%sApply exactly these settings? [y/N]: %s' "$C_WARN" "$C_RESET"
   IFS= read -r reply || return
   case "$reply" in
     y|Y|yes|YES) menu_run "${args[@]}" ;;
     *) printf 'Cancelled. No settings changed.\n' ;;
   esac
+}
+
+menu_choose_mirror() {
+  local mode="$1" answer mirror
+  printf '\n%sSelect a mirror for %s:%s\n\n' "$C_TITLE" \
+    "$([[ "$mode" == all ]] && printf 'ALL Ubuntu pockets' || printf 'normal Ubuntu pockets')" "$C_RESET"
+  printf '  1) ArvanCloud     2) IranServer\n'
+  printf '  3) Pishgaman      4) Official Ubuntu\n'
+  printf '  0) Cancel\n\n'
+  printf '%sManual selection does not pre-check freshness. Run Check Mirrors first.%s\n' "$C_WARN" "$C_RESET"
+  printf 'Choice [0-4]: '
+  IFS= read -r answer || return
+  case "$answer" in
+    1) mirror=arvan ;;
+    2) mirror=iranserver ;;
+    3) mirror=pishgaman ;;
+    4) mirror=ubuntu ;;
+    0|'') printf 'Cancelled.\n'; return 0 ;;
+    *) printf 'Invalid choice.\n'; return 1 ;;
+  esac
+  menu_preview_and_apply "$mode" "$(mirror_url "$mirror")"
 }
 
 menu_restore() {
@@ -600,66 +938,141 @@ menu_restore() {
   esac
 }
 
+MENU_ITEMS=(
+  "Select mirror  [official security updates]"
+  "Select mirror  [all Ubuntu pockets]"
+  "Auto Select Best Mirror"
+  "Check mirror freshness and download speed"
+  "Show mirror list"
+  "Preview default (Arvan) changes"
+  "Preview all-mirror changes"
+  "Show APT source status"
+  "Restore latest backup"
+  "Help and options"
+  "Exit"
+)
+
 menu_draw() {
-  local selected="$1" idx
-  local options=(
-    "Apply Arvan mirror (official security)"
-    "Apply Arvan to all repositories"
-    "Auto Select Best Mirror"
-    "Check mirror freshness and speed"
-    "List candidate mirror URLs"
-    "Preview default changes (dry-run)"
-    "Preview all-mirror changes"
-    "Show APT source status"
-    "Restore latest backup"
-    "Help and options"
-    "Exit"
-  )
+  local selected="$1" idx marker
   printf '\033[H\033[2J'
-  printf '========================================\n'
-  printf '  ARVAN MIRROR MANAGER  v%s\n' "$VERSION"
-  printf '========================================\n'
-  printf ' Ubuntu: %s    Mode: Interactive\n' "$CODENAME"
-  printf ' ---------------------------------------\n'
-  for idx in "${!options[@]}"; do
+  printf '%s' "$C_TITLE"
+  printf '  +--------------------------------------------------+\n'
+  printf '  |           ARVAN MIRROR MANAGER  v%-15s|\n' "$APP_VERSION"
+  printf '  +--------------------------------------------------+\n'
+  printf '%s' "$C_RESET"
+  printf '  Ubuntu: %s  |  SSH / Terminal\n' "$CODENAME"
+  printf '  %s%s%s\n' "$C_MUTED" 'Changes require confirmation; security stays official by default.' "$C_RESET"
+  printf '\n  %sMIRROR MANAGEMENT%s\n' "$C_SUCCESS" "$C_RESET"
+  for idx in "${!MENU_ITEMS[@]}"; do
+    if ((idx == 5)); then
+      printf '\n  %sTOOLS & RECOVERY%s\n' "$C_SUCCESS" "$C_RESET"
+    fi
+    marker=' '
+    if ((idx == selected)); then marker='>'; fi
     if ((idx == selected)); then
-      printf ' > %d) %s\n' "$((idx + 1))" "${options[idx]}"
+      printf '%s %s %2d. %-44s%s\n' "$C_ACCENT" "$marker" "$((idx+1))" "${MENU_ITEMS[idx]}" "$C_RESET"
     else
-      printf '   %d) %s\n' "$((idx + 1))" "${options[idx]}"
+      printf ' %s %2d. %s\n' "$marker" "$((idx+1))" "${MENU_ITEMS[idx]}"
     fi
   done
-  printf '\n Use Up/Down + Enter, 1-9, 0=Exit, or q to quit.\n'
-  printf ' Nothing changes until you confirm an action.\n'
+  printf '\n  %sUp/Down + Enter  |  1-11 + Enter  |  0/q = Exit%s\n' "$C_MUTED" "$C_RESET"
+}
+
+# Parse a numeric shortcut as a complete line, so '11' is not mistaken
+# for two presses of '1'. Arrow keys still use single-character input.
+menu_read_choice() {
+  local key extra selected="$1"
+  IFS= read -rsn1 key || return 1
+  case "$key" in
+    
+main() {
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then
+    ACTION="menu"
+  else
+    parse_args "$@"
+  fi
+  check_system
+  if [[ "$ACTION" == "list-mirrors" ]]; then
+    list_mirrors
+    return
+  fi
+  if [[ "$ACTION" == "check-mirrors" ]]; then
+    evaluate_mirrors
+    return
+  fi
+  if ((AUTO_SELECT)) && [[ "$ACTION" == "apply" || "$ACTION" == "dry-run" ]]; then
+    evaluate_mirrors
+    MIRROR="$BEST_MIRROR"
+  fi
+  case "$ACTION" in
+    menu)
+      interactive_menu
+      ;;
+    status)
+      find_sources
+      show_status
+      ;;
+    dry-run)
+      find_sources
+      apply_changes
+      ;;
+    apply)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      find_sources
+      apply_changes
+      ;;
+    restore)
+      check_privileges
+      command -v "$APT_GET" >/dev/null || die "apt-get is required"
+      restore_latest
+      ;;
+  esac
+}
+
+main "$@"
+\e')
+      extra=''
+      IFS= read -rsn2 -t 0.3 extra || :
+      case "$extra" in
+        '[A') MENU_CHOICE=$(((selected + ${#MENU_ITEMS[@]} - 1) % ${#MENU_ITEMS[@]})) ;;
+        '[B') MENU_CHOICE=$(((selected + 1) % ${#MENU_ITEMS[@]})) ;;
+        *) MENU_CHOICE="$selected" ;;
+      esac
+      MENU_ACTIVATE=0
+      ;;
+    q|Q|0) MENU_CHOICE=10; MENU_ACTIVATE=1 ;;
+    '') MENU_CHOICE="$selected"; MENU_ACTIVATE=1 ;;
+    [1-9])
+      extra=''
+      if [[ "$key" == 1 ]]; then
+        IFS= read -rsn1 -t 0.35 extra || :
+      fi
+      case "$key$extra" in
+        10) MENU_CHOICE=9 ;;
+        11) MENU_CHOICE=10 ;;
+        *) MENU_CHOICE=$((key - 1)) ;;
+      esac
+      MENU_ACTIVATE=1
+      ;;
+    *) MENU_CHOICE="$selected"; MENU_ACTIVATE=0 ;;
+  esac
 }
 
 interactive_menu() {
   [[ -t 0 && -t 1 ]] || die "Interactive menu requires a terminal (TTY). Use --help for CLI options."
-  local selected=0 key sequence choice
+  local selected=0 choice
+  menu_colors
   while :; do
     menu_draw "$selected"
-    key=''
-    IFS= read -rsn1 key || return 0
-    case "$key" in
-      $'\e')
-        sequence=''
-        IFS= read -rsn2 -t 0.3 sequence || :
-        case "$sequence" in
-          '[A') selected=$(((selected + 9) % 10)) ;;
-          '[B') selected=$(((selected + 1) % 10)) ;;
-        esac
-        continue
-        ;;
-      [1-9]) selected=$((key - 1)) ;;
-      0) selected=9 ;;
-      q|Q) printf '\n'; return 0 ;;
-      '') ;;
-      *) continue ;;
-    esac
+    menu_read_choice "$selected" || return 0
+    selected="$MENU_CHOICE"
+    ((MENU_ACTIVATE)) || continue
     choice=$((selected + 1))
     printf '\n'
     case "$choice" in
-      1) menu_preview_and_apply default || printf 'Action failed.\n' ;;
-      2) menu_preview_and_apply all || printf 'Action failed.\n' ;;
+      1) menu_choose_mirror default || printf 'Action failed.\n' ;;
+      2) menu_choose_mirror all || printf 'Action failed.\n' ;;
       3) menu_preview_and_apply auto || printf 'Auto selection failed.\n' ;;
       4) bash "$0" --check-mirrors || printf 'Check failed.\n' ;;
       5) bash "$0" --list-mirrors || printf 'List failed.\n' ;;
@@ -667,7 +1080,8 @@ interactive_menu() {
       7) bash "$0" --dry-run --all-mirror || printf 'Preview failed.\n' ;;
       8) bash "$0" --status || printf 'Status failed.\n' ;;
       9) menu_restore || printf 'Restore failed.\n' ;;
-      10) return 0 ;;
+      10) usage ;;
+      11) printf 'Goodbye!\n'; return 0 ;;
     esac
     menu_pause
   done
