@@ -7,7 +7,6 @@ DEFAULT_MIRROR="https://mirror.arvancloud.ir/ubuntu"
 SECURITY_MIRROR="https://security.ubuntu.com/ubuntu"
 MIRROR="$DEFAULT_MIRROR"
 ACTION="apply"
-INTERACTIVE=0
 ALL_MIRROR=0
 
 # The test root keeps integration tests away from the host's /etc/apt.
@@ -422,9 +421,8 @@ restore_latest() {
 # through a fresh process so the backup and rollback state cannot leak between
 # successive menu actions.
 menu_pause() {
-  local ignored
   printf '\nPress Enter to return to the menu...'
-  IFS= read -r ignored || :
+  IFS= read -r || :
 }
 
 menu_run() {
