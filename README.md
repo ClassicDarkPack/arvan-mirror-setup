@@ -35,7 +35,7 @@ curl -fL -o setup-arvan-mirror.sh \
   https://raw.githubusercontent.com/ClassicDarkPack/arvan-mirror-setup/main/setup-arvan-mirror.sh
 
 chmod +x setup-arvan-mirror.sh
-less setup-arvan-mirror.sh
+./setup-arvan-mirror.sh --menu
 ```
 
 Run the interactive menu in a terminal or SSH session:
