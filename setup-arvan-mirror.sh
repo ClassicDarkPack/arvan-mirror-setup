@@ -568,8 +568,13 @@ menu_preview_and_apply() {
   local mode="$1" reply
   local args=(--apply) preview=(--dry-run)
   if [[ "$mode" == "auto" ]]; then
-    args+=(--auto)
-    preview+=(--auto)
+    # Run Auto Select once, before the preview. The confirmed mirror URL
+    # must not change if network speeds vary after the user presses y.
+    evaluate_mirrors || return
+    [[ -n "$BEST_MIRROR" ]] || die "No validated mirror selected"
+    args+=(--mirror "$BEST_MIRROR")
+    preview+=(--mirror "$BEST_MIRROR")
+    printf 'Selected mirror for this operation: %s\n' "$BEST_MIRROR"
   fi
   if [[ "$mode" == "all" ]]; then
     args+=(--all-mirror)
