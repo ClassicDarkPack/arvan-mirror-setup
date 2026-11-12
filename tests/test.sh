@@ -304,4 +304,40 @@ if [[ "$MENU_FUNCTION" == *'args+=(--auto)'* ||
 fi
 pass 'auto preview and apply pin the same selected mirror'
 
+
+# Regression tests for the TUI navigation and mirror selection behavior.
+SCRIPT_TEXT="$(cat "$SCRIPT")"
+assert_contains "$SCRIPT" 'APP_VERSION="1.4.0"'
+assert_contains "$SCRIPT" '11) printf'
+assert_contains "$SCRIPT" 'menu_choose_mirror default'
+assert_contains "$SCRIPT" 'menu_choose_mirror all'
+assert_contains "$SCRIPT" 'benchmark_mirror()'
+assert_contains "$SCRIPT" 'binary-amd64/Packages.xz'
+pass 'interactive menu includes exit and manual mirror pickers'
+
+# A clean menu exit never modifies the sandbox's APT files.
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list" <<'MENU_EXIT'
+deb http://archive.ubuntu.com/ubuntu noble main
+MENU_EXIT
+cp "$ROOT/sandbox/etc/apt/sources.list" "$ROOT/menu-original"
+if command -v script >/dev/null 2>&1; then
+  # script(1) allocates a pseudo-TTY for the non-interactive CI process.
+  printf 'q' | ARVAN_TEST_ROOT="$ROOT/sandbox" \
+    ARVAN_TEST_APT_GET="$ROOT/fake-apt-get" \
+    script -q -e -c "bash '$SCRIPT' --menu" /dev/null > "$ROOT/menu-exit-output"
+  assert_contains "$ROOT/menu-exit-output" 'Goodbye!'
+  assert_same "$ROOT/sandbox/etc/apt/sources.list" "$ROOT/menu-original"
+  pass 'TTY menu exits without changing APT sources'
+fi
+
+# Built-in manual choices in both modes must pass a pinned URL to preview
+# and apply, rather than re-running automatic mirror selection.
+MENU_FUNCTION="$(sed -n '/^menu_preview_and_apply() {/,/^}/p' "$SCRIPT")"
+[[ "$MENU_FUNCTION" == *'args+=(--mirror "$selected_mirror")'* ]] \
+  || fail 'Manual apply did not pin its mirror'
+[[ "$MENU_FUNCTION" == *'preview+=(--mirror "$selected_mirror")'* ]] \
+  || fail 'Manual preview did not pin its mirror'
+pass 'manual preview and apply use the same selected mirror'
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
