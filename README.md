@@ -1,10 +1,18 @@
 # Arvan Mirror Setup
 
+> v1.3 adds named mirrors, signed repository freshness checks, and Auto Select. A listed mirror is not guaranteed healthy.
+
 A cautious Bash utility for switching **Ubuntu amd64** APT sources to the [ArvanCloud](https://www.arvancloud.ir/) mirror. It supports the legacy `sources.list` format and Ubuntu's newer deb822 `ubuntu.sources` format.
 
 Unlike the original installer, it **edits recognized Ubuntu entries instead of replacing entire source files**. It backs up changed files and automatically restores them if APT validation fails.
 
 ## Features
+
+- Built-in mirror choices: **ArvanCloud**, **IranServer**, **Pishgaman**, and **official Ubuntu** (`archive.ubuntu.com`).
+- `--check-mirrors` downloads and authenticates `InRelease` for `codename`, `-updates` and `-backports` using `gpgv` and the Ubuntu archive keyring; compares each `-updates` Date with the authenticated official Ubuntu reference (12-hour tolerance). With `--all-mirror` it also checks `-security` against official security metadata.
+- `--auto` selects the highest observed `-updates/InRelease` download speed **among validated, sufficiently fresh candidates**. This is an approximate small-file transfer measurement, not a full package download benchmark. It refuses to select a mirror if the official freshness reference is unavailable.
+- `--mirror pishgaman` / `--mirror ubuntu` choose catalogued URLs manually; these modes still validate APT on application, but do not perform a preselection freshness check.
+
 
 - **Interactive terminal menu** on TTY when launched without arguments (or with `--menu`), with arrow-key/number navigation, previews, and confirmations. Existing CLI flags remain available for automation.
 
@@ -21,7 +29,7 @@ Unlike the original installer, it **edits recognized Ubuntu entries instead of r
 
 ## Requirements
 
-- Ubuntu **amd64** with `apt-get`, `awk`, and standard GNU/Linux utilities.
+- Ubuntu **amd64** with `apt-get`, `awk`, and standard GNU/Linux utilities. For `--auto` and `--check-mirrors`, also install `curl`, `gpgv`, and `ubuntu-keyring`.
 - `sudo`/root access for `--apply` and `--restore` (the menu can request sudo when necessary).
 - Network access to the configured mirror and enabled APT repositories during validation.
 
@@ -65,9 +73,17 @@ Other options:
 ./setup-arvan-mirror.sh --status
 sudo ./setup-arvan-mirror.sh --restore
 sudo ./setup-arvan-mirror.sh --all-mirror
+./setup-arvan-mirror.sh --list-mirrors
+./setup-arvan-mirror.sh --check-mirrors
+./setup-arvan-mirror.sh --auto --dry-run
+sudo ./setup-arvan-mirror.sh --auto
+sudo ./setup-arvan-mirror.sh --mirror pishgaman
+sudo ./setup-arvan-mirror.sh --mirror ubuntu
 sudo ./setup-arvan-mirror.sh --mirror https://example.org/ubuntu
 ./setup-arvan-mirror.sh --help
 ```
+
+`--auto` and `--mirror` cannot be combined. Selecting an alternative mirror depends on that mirror actually serving the requested Ubuntu codename and pockets. If authenticated official reference metadata is unavailable, auto-selection fails closed. The interactive menu includes a read-only mirror check and automatic selection with a preview and confirmation.
 
 `--all-mirror` includes `-security` sources; without it, an existing official security URL remains unchanged. If previous versions redirected security updates to Arvan, the default mode switches those sources back to `https://security.ubuntu.com/ubuntu/`.
 
