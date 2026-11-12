@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bash-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Syntax check
+        run: bash -n setup-arvan-mirror.sh tests/test.sh
+      - name: ShellCheck
+        run: shellcheck -S warning setup-arvan-mirror.sh tests/test.sh
+      - name: Integration tests
+        run: bash tests/test.sh
