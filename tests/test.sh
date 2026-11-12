@@ -268,4 +268,25 @@ if run_script --auto --mirror ubuntu --dry-run > "$ROOT/mirror-conflict" 2>&1; t
 fi
 pass 'auto conflicts with explicit mirror'
 
+
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list" <<'SECURITY_SWAP'
+deb https://ubuntu.pishgaman.net/ubuntu/ noble main
+deb https://ubuntu.pishgaman.net/ubuntu/ noble-security main
+SECURITY_SWAP
+run_script --apply > /dev/null
+assert_contains "$ROOT/sandbox/etc/apt/sources.list" 'deb https://security.ubuntu.com/ubuntu/ noble-security main'
+pass 'switching away from Pishgaman restores official security origin'
+
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list.d/ubuntu.sources" <<'DEB822_SWAP'
+Types: deb
+URIs: https://mirror.iranserver.com/ubuntu/
+Suites: noble noble-updates noble-security
+Components: main
+DEB822_SWAP
+run_script --apply > /dev/null
+assert_contains "$ROOT/sandbox/etc/apt/sources.list.d/ubuntu.sources" 'URIs: https://security.ubuntu.com/ubuntu/'
+pass 'deb822 IranServer security is migrated to official origin'
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
