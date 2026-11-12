@@ -730,7 +730,9 @@ dashboard_size() {
     [[ "$rows" =~ ^[1-9][0-9]*$ ]] && UI_ROWS="$rows"
   fi
   UI_COMPACT=0
-  ((UI_ROWS < 27)) && UI_COMPACT=1
+  if ((UI_ROWS < 27)); then
+    UI_COMPACT=1
+  fi
 }
 
 dashboard_item() {
