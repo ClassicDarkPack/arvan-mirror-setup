@@ -245,4 +245,27 @@ run_script --help > "$ROOT/help-output"
 assert_contains "$ROOT/help-output" '--menu'
 pass 'help documents interactive menu'
 
+
+reset_root
+cat > "$ROOT/sandbox/etc/apt/sources.list" <<'NAMED'
+deb http://archive.ubuntu.com/ubuntu noble main
+NAMED
+run_script --list-mirrors > "$ROOT/mirrors"
+assert_contains "$ROOT/mirrors" 'pishgaman'
+assert_contains "$ROOT/mirrors" 'https://archive.ubuntu.com/ubuntu'
+pass 'mirror catalog includes official Ubuntu and Pishgaman'
+
+run_script --mirror pishgaman --dry-run > "$ROOT/named-preview"
+assert_contains "$ROOT/named-preview" 'https://ubuntu.pishgaman.net/ubuntu/'
+pass 'named mirror resolves Pishgaman URL'
+
+run_script --mirror ubuntu --dry-run > "$ROOT/official-preview"
+assert_contains "$ROOT/official-preview" 'https://archive.ubuntu.com/ubuntu/'
+pass 'named official Ubuntu mirror is selectable'
+
+if run_script --auto --mirror ubuntu --dry-run > "$ROOT/mirror-conflict" 2>&1; then
+  fail 'Expected --auto and --mirror conflict'
+fi
+pass 'auto conflicts with explicit mirror'
+
 printf 'Final result: %d integration tests passed.\n' "$PASS"
